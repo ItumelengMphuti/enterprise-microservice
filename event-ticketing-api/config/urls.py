@@ -26,6 +26,7 @@ from rest_framework_simplejwt.views import (
 from venues.views import VenueViewSet, SeatViewSet
 from events.views import EventViewSet, EventSeatViewSet
 from reservations.views import ReservationViewSet
+from core.views import health_check
 
 router = DefaultRouter()
 router.register("venues", VenueViewSet, basename="venue")
@@ -43,5 +44,6 @@ urlpatterns = [
     path("api/", include(router.urls)),
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("api/health/", health_check, name="health-check"),
 
 ]

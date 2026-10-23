@@ -1,5 +1,5 @@
 
-from rest_framework import viewsets
+# from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
@@ -7,6 +7,8 @@ from rest_framework import status
 
 from .models import Reservation
 from .serializers import ReservationSerializer
+from django.db import IntegrityError, transaction
+from rest_framework import status, viewsets
 
 
 class ReservationViewSet(viewsets.ModelViewSet):
@@ -24,6 +26,32 @@ class ReservationViewSet(viewsets.ModelViewSet):
         return Reservation.objects.filter(
             user=self.request.user
         ).select_related("event_seat")
+        
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            with transaction.atomic():
+                self.perform_create(serializer)
+        except IntegrityError:
+            return Response(
+                {
+                    "detail": (
+                        "This seat has already been reserved "
+                        "for this event."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        headers = self.get_success_headers(serializer.data)
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )   
 
     def perform_create(self, serializer):
         # The logged-in user becomes the reservation owner.
