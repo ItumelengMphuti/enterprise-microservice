@@ -1,4 +1,4 @@
-
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -35,6 +35,7 @@ class Event(models.Model):
         return self.title
 
 
+
 class EventSeat(models.Model):
     event = models.ForeignKey(
         Event,
@@ -51,6 +52,20 @@ class EventSeat(models.Model):
         decimal_places=2,
     )
 
+    def clean(self):
+        super().clean()
+
+        if self.event_id and self.seat_id:
+            if self.event.venue_id != self.seat.venue_id:
+                raise ValidationError({
+                    "seat": "The seat must belong to the event's venue."
+                })
+
+        if self.price is not None and self.price < 0:
+            raise ValidationError({
+                "price": "Ticket price cannot be negative."
+            })
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -65,3 +80,4 @@ class EventSeat(models.Model):
 
     def __str__(self):
         return f"{self.event.title} - {self.seat}"
+
