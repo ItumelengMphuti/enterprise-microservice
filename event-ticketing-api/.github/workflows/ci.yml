@@ -1,0 +1,74 @@
+name: Event Ticketing API CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: event_ticketing_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_ticketing_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POSTGRES_DB: event_ticketing_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DJANGO_DEBUG: "False"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+      DJANGO_SECRET_KEY: ci-only-secret-key
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Check Django configuration
+        run: python manage.py check
+
+      - name: Lint Python code
+        run: >-
+          python -m flake8 config core events reservations manage.py
+          --max-line-length=88
+          --extend-ignore=E203,W503
+          --extend-exclude=*/migrations/*
+
+      - name: Run database migrations
+        run: python manage.py migrate --noinput
+
+      - name: Run tests with coverage
+        run: python -m coverage run --source=venues,events,reservations,core manage.py test
+
+      - name: Enforce model and API coverage
+        run: >-
+          python -m coverage report
+          --include=*/views.py,*/models.py,*/serializers.py,core/exceptions.py
+          --fail-under=80
+
+      - name: Build Docker image
+        run: docker build --tag event-ticketing-api:ci .
+        working-directory: event-ticketing-api

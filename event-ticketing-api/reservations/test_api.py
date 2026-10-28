@@ -1,10 +1,11 @@
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.test import override_settings
+from django.db import IntegrityError
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
+from unittest.mock import patch
 
 from venues.models import Venue, Seat
 from events.models import Event, EventSeat
@@ -62,6 +63,32 @@ class ReservationAPITests(APITestCase):
             response.status_code,
             status.HTTP_401_UNAUTHORIZED,
         )
+        self.assertEqual(
+            response.data["error"]["code"],
+            "not_authenticated",
+        )
+        self.assertEqual(response.data["error"]["details"], {})
+
+    def test_jwt_token_authenticates_a_customer(self):
+        user = User.objects.create_user(
+            username="jwt_customer",
+            password="test-only-password",
+        )
+        token_response = self.client.post(
+            "/api/token/",
+            {
+                "username": user.username,
+                "password": "test-only-password",
+            },
+            format="json",
+        )
+        self.assertEqual(token_response.status_code, status.HTTP_200_OK)
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {token_response.data['access']}"
+        )
+        response = self.client.get(self.reservation_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_customer_only_sees_their_own_reservations(self):
         own_reservation = self.create_reservation(self.customer)
@@ -91,7 +118,6 @@ class ReservationAPITests(APITestCase):
         returned_ids = [item["id"] for item in response.data]
 
         self.assertEqual(returned_ids, [own_reservation.id])
-
 
     def test_customer_cannot_view_another_customers_reservation(self):
         other_reservation = self.create_reservation(self.other_customer)
@@ -145,8 +171,7 @@ class ReservationAPITests(APITestCase):
 
         self.assertEqual(reservation.user, self.customer)
         self.assertEqual(reservation.status, Reservation.Status.PENDING)
-        
-        
+
     def test_customer_cannot_book_an_already_reserved_seat(self):
         self.create_reservation(self.other_customer)
         self.client.force_authenticate(user=self.customer)
@@ -158,5 +183,78 @@ class ReservationAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("event_seat", response.data)
+        self.assertIn(
+            "event_seat",
+            response.data["error"]["details"],
+        )
 
+    def test_staff_can_view_all_reservations_and_manage_them(self):
+        self.create_reservation(self.customer)
+        staff = User.objects.create_user(
+            username="reservation_staff",
+            password="test-password",
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=staff)
+
+        response = self.client.get(self.reservation_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+
+        reservation_id = response.data[0]["id"]
+        response = self.client.patch(
+            f"{self.reservation_url}{reservation_id}/",
+            {"status": Reservation.Status.CANCELLED},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.delete(
+            f"{self.reservation_url}{reservation_id}/"
+        )
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_customer_can_cancel_their_reservation(self):
+        reservation = self.create_reservation(self.customer)
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            f"{self.reservation_url}{reservation.pk}/cancel/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        reservation.refresh_from_db()
+        self.assertEqual(
+            reservation.status,
+            Reservation.Status.CANCELLED,
+        )
+
+    def test_cancelled_reservation_cannot_be_cancelled_again(self):
+        reservation = self.create_reservation(self.customer)
+        reservation.status = Reservation.Status.CANCELLED
+        reservation.save(update_fields=["status"])
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            f"{self.reservation_url}{reservation.pk}/cancel/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"]["code"], "invalid")
+
+    @patch(
+        "reservations.views.ReservationViewSet.perform_create",
+        side_effect=IntegrityError,
+    )
+    def test_concurrent_duplicate_reservation_returns_conflict(self, _mock):
+        self.client.force_authenticate(user=self.customer)
+
+        response = self.client.post(
+            self.reservation_url,
+            {"event_seat": self.event_seat.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data["error"]["code"], "conflict")
+        self.assertEqual(response.data["error"]["details"], {})

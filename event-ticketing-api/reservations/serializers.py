@@ -31,4 +31,3 @@ class ReservationSerializer(serializers.ModelSerializer):
             )
 
         return event_seat
-

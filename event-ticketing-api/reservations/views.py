@@ -1,16 +1,26 @@
+from django.db import IntegrityError, transaction
 
-# from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
-from rest_framework import status
+
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 
 from .models import Reservation
 from .serializers import ReservationSerializer
-from django.db import IntegrityError, transaction
-from rest_framework import status, viewsets
 
 
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            name="id",
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.PATH,
+        )
+    ]
+)
 class ReservationViewSet(viewsets.ModelViewSet):
     serializer_class = ReservationSerializer
     permission_classes = [IsAuthenticated]
@@ -26,7 +36,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         return Reservation.objects.filter(
             user=self.request.user
         ).select_related("event_seat")
-        
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -37,10 +47,14 @@ class ReservationViewSet(viewsets.ModelViewSet):
         except IntegrityError:
             return Response(
                 {
-                    "detail": (
-                        "This seat has already been reserved "
-                        "for this event."
-                    )
+                    "error": {
+                        "code": "conflict",
+                        "message": (
+                            "This seat has already been reserved "
+                            "for this event."
+                        ),
+                        "details": {},
+                    }
                 },
                 status=status.HTTP_409_CONFLICT,
             )
@@ -51,7 +65,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             serializer.data,
             status=status.HTTP_201_CREATED,
             headers=headers,
-        )   
+        )
 
     def perform_create(self, serializer):
         # The logged-in user becomes the reservation owner.
@@ -63,7 +77,15 @@ class ReservationViewSet(viewsets.ModelViewSet):
 
         if reservation.status == Reservation.Status.CANCELLED:
             return Response(
-                {"detail": "This reservation is already cancelled."},
+                {
+                    "error": {
+                        "code": "invalid",
+                        "message": (
+                            "This reservation is already cancelled."
+                        ),
+                        "details": {},
+                    }
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -74,8 +96,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             ReservationSerializer(reservation).data,
             status=status.HTTP_200_OK,
         )
-        
-        
+
     def get_permissions(self):
         if self.action in ["list", "retrieve", "create", "cancel"]:
             permission_classes = [IsAuthenticated]
@@ -83,4 +104,3 @@ class ReservationViewSet(viewsets.ModelViewSet):
             permission_classes = [IsAdminUser]
 
         return [permission() for permission in permission_classes]
-

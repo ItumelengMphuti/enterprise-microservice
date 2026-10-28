@@ -13,6 +13,11 @@ class Event(models.Model):
         on_delete=models.PROTECT,
         related_name="events",
     )
+    seats = models.ManyToManyField(
+        "venues.Seat",
+        through="EventSeat",
+        related_name="events",
+    )
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     start_time = models.DateTimeField()
@@ -33,7 +38,6 @@ class Event(models.Model):
 
     def __str__(self):
         return self.title
-
 
 
 class EventSeat(models.Model):
@@ -80,4 +84,3 @@ class EventSeat(models.Model):
 
     def __str__(self):
         return f"{self.event.title} - {self.seat}"
-
